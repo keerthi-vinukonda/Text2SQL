@@ -1,24 +1,24 @@
 # llm.py
 
 import os
-import anthropic
+import json
+import re
+import google.generativeai as genai
 from dotenv import load_dotenv
 from schema import TABLE_SCHEMA
 
 load_dotenv()
 
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+
+for model in genai.list_models():
+    if "generateContent" in model.supported_generation_methods:
+        print(model.name)
 
 
 # ── LLM Call 1: Natural Language → SQL ──────────────────────────────────────
 
 def generate_sql(user_question: str, conversation_history: list) -> dict:
-    """
-    Converts a plain English question into a Snowflake SQL query.
-    Uses conversation history for follow-up question support.
-
-    Returns: { "sql": "...", "explanation": "..." }
-    """
 
     system_prompt = f"""
 You are an expert SQL engineer working with Snowflake databases.
@@ -38,32 +38,24 @@ IMPORTANT:
   {{"sql": "INVALID", "explanation": "Reason why the question cannot be answered"}}
 """
 
-    # Build messages with conversation history (supports follow-ups)
-    messages = []
-
-    # Inject past conversation turns for context (last 6 turns max)
-    for turn in conversation_history[-6:]:
-        messages.append({"role": "user",      "content": turn["question"]})
-        messages.append({"role": "assistant",  "content": turn["sql"]})
-
-    # Add current question
-    messages.append({"role": "user", "content": user_question})
-
-    response = client.messages.create(
-        model="claude-opus-4-5",
-        max_tokens=500,
-        system=system_prompt,
-        messages=messages
+    model = genai.GenerativeModel(
+        model_name="gemini-2.5-flash",
+        system_instruction=system_prompt   # ← Gemini takes system prompt here
     )
 
-    import json
-    raw = response.content[0].text.strip()
+    # Build history in Gemini format (role: "user"/"model", parts: [...])
+    history = []
+    for turn in conversation_history[-6:]:
+        history.append({"role": "user",  "parts": [turn["question"]]})
+        history.append({"role": "model", "parts": [turn["sql"]]})  # ← "model" not "assistant"
+
+    chat = model.start_chat(history=history)
+    response = chat.send_message(user_question)
+    raw = response.text.strip()
 
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        # Fallback if Claude adds extra text
-        import re
         match = re.search(r'\{.*\}', raw, re.DOTALL)
         if match:
             return json.loads(match.group())
@@ -72,21 +64,11 @@ IMPORTANT:
 
 # ── LLM Call 2: Raw DB Results → Natural Language ───────────────────────────
 
-def explain_results(
-    user_question: str,
-    sql_query: str,
-    columns: list,
-    rows: list
-) -> str:
-    """
-    Converts raw Snowflake query results into a natural language answer.
-    """
+def explain_results(user_question, sql_query, columns, rows) -> str:
 
-    # Format results for the LLM
     if not rows:
         data_str = "The query returned no results."
     else:
-        # Build a simple text table
         header = " | ".join(columns)
         separator = "-" * len(header)
         data_rows = "\n".join([" | ".join(str(v) for v in row) for row in rows[:20]])
@@ -106,17 +88,13 @@ The database returned these results:
 Now write a clear, concise natural language answer to the user's question based on these results.
 
 Rules:
-- Speak directly to the user (use "you" / "there are" etc.)
+- Speak directly to the user
 - Be conversational but precise
 - Include key numbers and names from the results
 - If no results, say so clearly
 - Keep it to 2-4 sentences max
 """
 
-    response = client.messages.create(
-        model="claude-opus-4-5",
-        max_tokens=300,
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    return response.content[0].text.strip()
+    model = genai.GenerativeModel(model_name="gemini-2.5-flash")
+    response = model.generate_content(prompt)   # ← simple single-turn call
+    return response.text.strip()

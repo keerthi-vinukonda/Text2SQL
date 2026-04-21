@@ -6,7 +6,7 @@ from pipeline import run_pipeline, display_result
 def main():
     print("\n" + "=" * 60)
     print("   🤖 Text-to-SQL AI Assistant")
-    print("   Powered by Claude + Snowflake")
+    print("   Powered by Generative AI + Snowflake")
     print("=" * 60)
     print("\n💡 Ask questions about employees in plain English.")
     print("   Type 'history' to see past questions.")

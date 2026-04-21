@@ -27,7 +27,7 @@ def run_pipeline(user_question: str, conversation_history: list) -> dict:
     }
 
     # ── Step 1: Generate SQL ─────────────────────────────────────────────────
-    print("\n  Step 1: Generating SQL with Claude...")
+    print("\n  Step 1: Generating SQL with Generative AI...")
     llm_response = generate_sql(user_question, conversation_history)
 
     result["sql"]         = llm_response.get("sql")
