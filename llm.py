@@ -3,17 +3,14 @@
 import os
 import json
 import re
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 from schema import TABLE_SCHEMA
 
 load_dotenv()
 
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-
-for model in genai.list_models():
-    if "generateContent" in model.supported_generation_methods:
-        print(model.name)
+client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
 
 # ── LLM Call 1: Natural Language → SQL ──────────────────────────────────────
@@ -38,19 +35,32 @@ IMPORTANT:
   {{"sql": "INVALID", "explanation": "Reason why the question cannot be answered"}}
 """
 
-    model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
-        system_instruction=system_prompt   # ← Gemini takes system prompt here
-    )
-
-    # Build history in Gemini format (role: "user"/"model", parts: [...])
+    # Build conversation history in new SDK format
     history = []
     for turn in conversation_history[-6:]:
-        history.append({"role": "user",  "parts": [turn["question"]]})
-        history.append({"role": "model", "parts": [turn["sql"]]})  # ← "model" not "assistant"
+        history.append(types.Content(
+            role="user",
+            parts=[types.Part(text=turn["question"])]
+        ))
+        history.append(types.Content(
+            role="model",
+            parts=[types.Part(text=turn["sql"])]
+        ))
 
-    chat = model.start_chat(history=history)
-    response = chat.send_message(user_question)
+    # Add current question
+    history.append(types.Content(
+        role="user",
+        parts=[types.Part(text=user_question)]
+    ))
+
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        config=types.GenerateContentConfig(
+            system_instruction=system_prompt
+        ),
+        contents=history
+    )
+
     raw = response.text.strip()
 
     try:
@@ -95,6 +105,9 @@ Rules:
 - Keep it to 2-4 sentences max
 """
 
-    model = genai.GenerativeModel(model_name="gemini-2.5-flash")
-    response = model.generate_content(prompt)   # ← simple single-turn call
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt
+    )
+
     return response.text.strip()
